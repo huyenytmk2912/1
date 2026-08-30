@@ -1,0 +1,1 @@
+{"name":"chatgpt-ui-agent","private":true,"type":"module","scripts":{"start":"node agent.js"},"dependencies":{"openai":"^5.0.0","playwright":"^1.55.0"}}
