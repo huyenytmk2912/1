@@ -39,17 +39,34 @@ source "$APP_DIR/.venv/bin/activate"
 python -m pip install --upgrade pip
 python -m pip install -r "$APP_DIR/requirements.txt" pypdf beautifulsoup4
 
-# Fixed model choice: Gemma 3 4B, replacing the previous Qwen runtime.
-# It is selected for compact VPS inference and broad multilingual/Vietnamese support.
+# Model: Gemma 3 4B. Vietnamese prompts are used by the project runtime.
 MODEL="gemma3:4b"
 
-log "Installing and validating Ollama + $MODEL"
-# Always run the official installer/update so a stale/broken Ollama binary is not reused.
-curl -fsSL https://ollama.com/install.sh | $SUDO sh
-command -v ollama >/dev/null 2>&1 || { echo "ERROR: Ollama CLI was not installed."; exit 1; }
-ollama -v
+# IMPORTANT: Ollama 0.30.x changed the Linux model backend to llama.cpp/llama-server.
+# Some 0.30.x package builds have shipped without llama-server, producing the exact
+# HTTP 500 seen on this VPS. Pin a known stable pre-0.30 release for this project.
+OLLAMA_VERSION="${OLLAMA_VERSION:-0.24.0}"
 
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+log "Installing and validating Ollama $OLLAMA_VERSION + $MODEL"
+# Remove stale libraries first; the official Linux docs explicitly recommend this when reinstalling.
+if need systemctl; then
+  $SUDO systemctl stop ollama 2>/dev/null || true
+  $SUDO systemctl disable ollama 2>/dev/null || true
+fi
+pkill -x ollama 2>/dev/null || true
+$SUDO rm -rf /usr/lib/ollama /usr/local/lib/ollama /lib/ollama
+
+# Use the official installer with a pinned version, not the moving latest release.
+curl -fsSL https://ollama.com/install.sh | $SUDO env OLLAMA_VERSION="$OLLAMA_VERSION" sh
+command -v ollama >/dev/null 2>&1 || { echo "ERROR: Ollama CLI was not installed."; exit 1; }
+INSTALLED_OLLAMA="$(ollama -v | awk '{print $NF}')"
+[ "$INSTALLED_OLLAMA" = "$OLLAMA_VERSION" ] || {
+  echo "ERROR: requested Ollama $OLLAMA_VERSION but installed $INSTALLED_OLLAMA"; exit 1;
+}
+echo "Ollama version check: OK ($INSTALLED_OLLAMA)"
+
+if need systemctl && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+  $SUDO systemctl daemon-reload
   $SUDO systemctl enable --now ollama
 else
   pkill -x ollama 2>/dev/null || true
@@ -108,6 +125,7 @@ MAX_SOURCE_CHARS=30000
 MIN_QUALITY_SCORE=0.80
 AUTO_TRAIN=0
 LANGUAGE=vi
+OLLAMA_VERSION=$OLLAMA_VERSION
 EOF
 
 cat > "$APP_DIR/run.sh" <<'EOF'
@@ -135,6 +153,7 @@ log "Installation complete"
 echo "Project: $APP_DIR"
 echo "Local AI: $MODEL"
 echo "Language: Vietnamese (vi)"
+echo "Ollama: $OLLAMA_VERSION"
 echo "Model smoke test: PASS"
 echo "Start worker: $APP_DIR/run.sh worker"
 echo "Training is disabled on VPS 1."
