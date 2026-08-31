@@ -39,15 +39,22 @@ def llm(prompt,model=None):
   body=json.dumps({'model':model,'prompt':prompt,'stream':False,'options':{'temperature':0.1}}).encode(); req=Request(OLLAMA+'/api/generate',data=body,headers={'Content-Type':'application/json'}); return json.loads(urlopen(req,timeout=180).read()).get('response','')
  except Exception as e: print('[llm]',e); return None
 def make(d):
- prompt=f'''Create ONE conservative training example. JSON only. Fields: messages,domain,source,source_type,quality. Do not invent facts. Reasoning: problem, concise key_steps, answer, verification. Coding: task, solution, tests/expected behavior. Trading: concepts, risk, statistics and scenario analysis; no personalized advice, no fabricated returns. Source={d['source']} Domain={d['domain']} Text={d['text'][:MAX]}'''
+ prompt=f'''Bạn đang tạo dữ liệu huấn luyện bằng tiếng Việt. Hãy tạo DUY NHẤT một ví dụ huấn luyện thận trọng dưới dạng JSON hợp lệ, không markdown.
+Các trường bắt buộc: messages, domain, source, source_type, quality.
+Không bịa thông tin và không suy diễn vượt quá nguồn.
+Reasoning: nêu bài toán, các bước chính ngắn gọn, đáp án và kiểm tra kết quả; không lưu chain-of-thought ẩn.
+Coding: nêu nhiệm vụ, giải pháp và kiểm thử/hành vi mong đợi.
+Trading: chỉ tập trung khái niệm, thống kê, rủi ro, cấu trúc thị trường, backtesting và phân tích kịch bản; không đưa lời khuyên cá nhân và không bịa lợi nhuận.
+Ưu tiên nội dung tiếng Việt nếu nguồn cho phép; nếu nguồn là tiếng Anh thì diễn đạt kết quả bằng tiếng Việt.
+Source={d['source']} Domain={d['domain']} Text={d['text'][:MAX]}'''
  raw=llm(prompt)
  if raw:
   try:return json.loads(raw.strip().removeprefix('```json').removesuffix('```').strip())
   except:pass
- return {'messages':[{'role':'user','content':f'Explain the main ideas in this {d["domain"]} source.'},{'role':'assistant','content':d['text'][:4000]}],'domain':d['domain'],'source':d['source'],'source_type':d.get('source_type','source'),'quality':{'needs_review':True,'generated':False}}
+ return {'messages':[{'role':'user','content':f'Hãy giải thích bằng tiếng Việt các ý chính của nguồn thuộc lĩnh vực {d["domain"]}.'},{'role':'assistant','content':d['text'][:4000]}],'domain':d['domain'],'source':d['source'],'source_type':d.get('source_type','source'),'quality':{'needs_review':True,'generated':False}}
 def ai_verify(o):
  if not VERIFY_MODEL:return {'decision':'REVIEW','reason':'no verifier model configured'}
- prompt='Review this example for factual support, consistency, unsupported claims, domain safety and task/answer alignment. Return JSON only with decision PASS|REVIEW|REJECT, score 0..1, issues array. Do not disclose hidden chain-of-thought. '+json.dumps(o,ensure_ascii=False)
+ prompt='Kiểm tra ví dụ huấn luyện sau bằng tiếng Việt về căn cứ sự thật, tính nhất quán, tuyên bố không được nguồn hỗ trợ, an toàn lĩnh vực và mức phù hợp nhiệm vụ/đáp án. Chỉ trả JSON với decision PASS|REVIEW|REJECT, score 0..1, issues array. Không tiết lộ chain-of-thought ẩn. '+json.dumps(o,ensure_ascii=False)
  raw=llm(prompt,VERIFY_MODEL)
  try:return json.loads(raw.strip().removeprefix('```json').removesuffix('```').strip())
  except:return {'decision':'REVIEW','reason':'invalid verifier response'}
@@ -79,7 +86,7 @@ def split():
  for n,a in b.items():(OUT/f'{n}.jsonl').write_text(''.join(json.dumps(x,ensure_ascii=False)+'\n' for x in a),encoding='utf-8')
  (OUT/'stats.json').write_text(json.dumps({'total':len(rows),**{k:len(v) for k,v in b.items()}},indent=2),encoding='utf-8')
 def run():
- print('VPS-1 data factory started; training is disabled here.')
+ print('VPS-1 data factory started; training is disabled here; language=vi.')
  while True:
   discover();ingest_inbox();process();split()
   if os.getenv('ONCE','0')=='1':return
