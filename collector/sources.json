@@ -1,0 +1,5 @@
+{
+  "arxiv": {"enabled": true, "license_policy": "record_and_review"},
+  "local_drop": {"enabled": true, "path": "data/inbox"},
+  "huggingface": {"enabled": false, "note": "Enable only with an explicit dataset allowlist and license checks."}
+}
