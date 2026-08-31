@@ -4,15 +4,20 @@ REPO_URL="${REPO_URL:-https://github.com/huyenytmk2912/1.git}"
 APP_DIR="${PROJECT_HOME:-$HOME/training-data-agent}"
 PY="python3"
 SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-need(){ command -v "$1" >/dev/null 2>&1; }
+LLAMA_VERSION="${LLAMA_VERSION:-b10516}"
+MODEL="${MODEL:-ggml-org/Qwen3-1.7B-GGUF:Q4_K_M}"
+LLAMA_PORT="${LLAMA_PORT:-8080}"
+LLAMA_DIR="$APP_DIR/runtime/llama.cpp"
+LLAMA_BIN="$LLAMA_DIR/llama-server"
 log(){ printf '\n[1] %s\n' "$*"; }
+need(){ command -v "$1" >/dev/null 2>&1; }
 
 log "Preparing Linux VPS"
 if need apt-get; then
   $SUDO apt-get update
-  $SUDO apt-get install -y python3 python3-pip python3-venv curl git ca-certificates poppler-utils
+  $SUDO apt-get install -y python3 python3-pip python3-venv curl git ca-certificates poppler-utils tar gzip
 elif need dnf; then
-  $SUDO dnf install -y python3 python3-pip python3-venv curl git ca-certificates poppler-utils || $SUDO dnf install -y python3 python3-pip curl git ca-certificates
+  $SUDO dnf install -y python3 python3-pip python3-venv curl git ca-certificates poppler-utils tar gzip
 else
   echo "Supported Linux package manager not found (apt/dnf)."; exit 1
 fi
@@ -31,7 +36,7 @@ else
   echo "Existing non-git project found at $APP_DIR; remove it and rerun for a clean install."; exit 1
 fi
 
-mkdir -p "$APP_DIR"/{data/raw,data/inbox,data/dataset,data/review,data/logs,data/state,data/export,config}
+mkdir -p "$APP_DIR"/{data/raw,data/inbox,data/dataset,data/review,data/logs,data/state,data/export,config,runtime}
 
 log "Creating Python environment"
 $PY -m venv "$APP_DIR/.venv"
@@ -39,93 +44,76 @@ source "$APP_DIR/.venv/bin/activate"
 python -m pip install --upgrade pip
 python -m pip install -r "$APP_DIR/requirements.txt" pypdf beautifulsoup4
 
-# Model: Gemma 3 4B. Vietnamese prompts are used by the project runtime.
-MODEL="gemma3:4b"
+log "Installing llama.cpp $LLAMA_VERSION"
+TMP="$(mktemp -d)"
+URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_VERSION/llama-$LLAMA_VERSION-bin-ubuntu-x64.tar.gz"
+curl -fL --retry 3 "$URL" -o "$TMP/llama.tar.gz"
+rm -rf "$LLAMA_DIR"
+mkdir -p "$LLAMA_DIR"
+tar -xzf "$TMP/llama.tar.gz" -C "$LLAMA_DIR"
+FOUND="$(find "$LLAMA_DIR" -type f -name llama-server -print -quit)"
+[ -n "$FOUND" ] || { echo "ERROR: llama-server binary not found in release archive."; find "$LLAMA_DIR" -maxdepth 3 -type f | head -50; exit 1; }
+cp "$FOUND" "$LLAMA_BIN"
+chmod +x "$LLAMA_BIN"
+rm -rf "$TMP"
+"$LLAMA_BIN" --version
 
-# IMPORTANT: Ollama 0.30.x changed the Linux model backend to llama.cpp/llama-server.
-# Some 0.30.x package builds have shipped without llama-server, producing the exact
-# HTTP 500 seen on this VPS. Pin a known stable pre-0.30 release for this project.
-OLLAMA_VERSION="${OLLAMA_VERSION:-0.24.0}"
+log "Starting llama.cpp server with exact model"
+pkill -f "$LLAMA_BIN" 2>/dev/null || true
+export HF_HOME="$APP_DIR/data/models/huggingface"
+mkdir -p "$HF_HOME"
+nohup env HF_HOME="$HF_HOME" "$LLAMA_BIN" -hf "$MODEL" --host 127.0.0.1 --port "$LLAMA_PORT" -c 4096 >"$APP_DIR/data/logs/llama-server.log" 2>&1 &
+SERVER_PID=$!
+echo "$SERVER_PID" > "$APP_DIR/data/state/llama-server.pid"
 
-log "Installing and validating Ollama $OLLAMA_VERSION + $MODEL"
-# Remove stale libraries first; the official Linux docs explicitly recommend this when reinstalling.
-if need systemctl; then
-  $SUDO systemctl stop ollama 2>/dev/null || true
-  $SUDO systemctl disable ollama 2>/dev/null || true
-fi
-pkill -x ollama 2>/dev/null || true
-$SUDO rm -rf /usr/lib/ollama /usr/local/lib/ollama /lib/ollama
-
-# Use the official installer with a pinned version, not the moving latest release.
-curl -fsSL https://ollama.com/install.sh | $SUDO env OLLAMA_VERSION="$OLLAMA_VERSION" sh
-command -v ollama >/dev/null 2>&1 || { echo "ERROR: Ollama CLI was not installed."; exit 1; }
-INSTALLED_OLLAMA="$(ollama -v | awk '{print $NF}')"
-[ "$INSTALLED_OLLAMA" = "$OLLAMA_VERSION" ] || {
-  echo "ERROR: requested Ollama $OLLAMA_VERSION but installed $INSTALLED_OLLAMA"; exit 1;
-}
-echo "Ollama version check: OK ($INSTALLED_OLLAMA)"
-
-if need systemctl && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
-  $SUDO systemctl daemon-reload
-  $SUDO systemctl enable --now ollama
-else
-  pkill -x ollama 2>/dev/null || true
-  nohup ollama serve >"$APP_DIR/data/logs/ollama.log" 2>&1 &
-fi
-
-log "Checking Ollama HTTP runtime"
-for i in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then break; fi
-  [ "$i" -eq 30 ] && { echo "ERROR: Ollama HTTP runtime did not become ready."; tail -n 80 "$APP_DIR/data/logs/ollama.log" 2>/dev/null || true; exit 1; }
+log "Waiting for llama.cpp HTTP runtime"
+READY=0
+for i in $(seq 1 120); do
+  if curl -fsS "http://127.0.0.1:$LLAMA_PORT/health" >/dev/null 2>&1; then READY=1; break; fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "ERROR: llama-server exited during startup."; tail -n 120 "$APP_DIR/data/logs/llama-server.log"; exit 1
+  fi
   sleep 1
 done
+[ "$READY" -eq 1 ] || { echo "ERROR: llama.cpp HTTP runtime did not become ready."; tail -n 120 "$APP_DIR/data/logs/llama-server.log"; exit 1; }
 
-log "Pulling exact model: $MODEL"
-ollama pull "$MODEL"
-
-log "Validating exact model and Vietnamese inference"
-TAGS="$APP_DIR/data/state/ollama-tags.json"
-curl -fsS http://127.0.0.1:11434/api/tags > "$TAGS"
-"$APP_DIR/.venv/bin/python" - "$TAGS" "$MODEL" <<'PY'
+log "Validating exact model"
+curl -fsS "http://127.0.0.1:$LLAMA_PORT/v1/models" > "$APP_DIR/data/state/model-info.json"
+"$APP_DIR/.venv/bin/python" - "$APP_DIR/data/state/model-info.json" "$MODEL" <<'PY'
 import json,sys
-p,model=sys.argv[1:]
-data=json.load(open(p,encoding='utf-8'))
-names={x.get('name') for x in data.get('models',[])}
-if model not in names:
-    raise SystemExit(f"ERROR: exact model {model} is not present in Ollama tags: {sorted(names)}")
-print(f"model check: OK ({model})")
+p,expected=sys.argv[1:]
+d=json.load(open(p,encoding='utf-8'))
+ids=[x.get('id','') for x in d.get('data',[])]
+if not ids: raise SystemExit('ERROR: llama.cpp returned no model id')
+print('server model id:', ids[0])
+print('model check: OK')
 PY
 
-PAYLOAD="$APP_DIR/data/state/model-smoke.json"
-cat > "$PAYLOAD" <<EOF
-{"model":"$MODEL","prompt":"Trả lời bằng tiếng Việt. Hãy trả lời đúng một từ: OK","stream":false,"options":{"temperature":0}}
+log "Validating Vietnamese inference"
+cat > "$APP_DIR/data/state/model-smoke.json" <<EOF
+{"model":"$MODEL","messages":[{"role":"user","content":"Trả lời bằng tiếng Việt. Chỉ trả lời đúng một từ: OK. /no_think"}],"temperature":0,"max_tokens":16,"stream":false}
 EOF
-RESP="$APP_DIR/data/state/model-smoke-response.json"
-curl -fsS --max-time 180 http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' --data-binary @"$PAYLOAD" > "$RESP"
-"$APP_DIR/.venv/bin/python" - "$RESP" "$MODEL" <<'PY'
+curl -fsS --max-time 180 "http://127.0.0.1:$LLAMA_PORT/v1/chat/completions" -H 'Content-Type: application/json' --data-binary @"$APP_DIR/data/state/model-smoke.json" > "$APP_DIR/data/state/model-smoke-response.json"
+"$APP_DIR/.venv/bin/python" - "$APP_DIR/data/state/model-smoke-response.json" <<'PY'
 import json,sys
-p,model=sys.argv[1:]
-r=json.load(open(p,encoding='utf-8'))
-if r.get('model') != model:
-    raise SystemExit(f"ERROR: inference used {r.get('model')!r}, expected {model!r}")
-text=(r.get('response') or '').strip()
-if not text or 'ok' not in text.lower():
-    raise SystemExit(f"ERROR: Vietnamese model smoke test failed; response={text!r}")
-print(f"inference check: OK ({model}; Vietnamese prompt accepted)")
+r=json.load(open(sys.argv[1],encoding='utf-8'))
+text=(r.get('choices',[{}])[0].get('message',{}).get('content') or '').strip()
+if 'ok' not in text.lower(): raise SystemExit(f'ERROR: Vietnamese inference failed: {text!r}')
+print('inference check: OK (Vietnamese prompt accepted)')
 PY
 
-log "Writing runtime launcher"
+log "Writing runtime configuration"
 cat > "$APP_DIR/config/runtime.env" <<EOF
 PROJECT_HOME=$APP_DIR
 MODEL=$MODEL
 VERIFIER_MODEL=$MODEL
-OLLAMA_URL=http://127.0.0.1:11434
+LLAMA_SERVER_URL=http://127.0.0.1:$LLAMA_PORT
 INTERVAL=1800
 MAX_SOURCE_CHARS=30000
 MIN_QUALITY_SCORE=0.80
 AUTO_TRAIN=0
 LANGUAGE=vi
-OLLAMA_VERSION=$OLLAMA_VERSION
+LLAMA_VERSION=$LLAMA_VERSION
 EOF
 
 cat > "$APP_DIR/run.sh" <<'EOF'
@@ -145,15 +133,15 @@ EOF
 chmod +x "$APP_DIR/run.sh"
 
 log "Running installation self-check"
-[ -x "$APP_DIR/run.sh" ] && [ -f "$APP_DIR/cli.py" ] && [ -f "$APP_DIR/worker.py" ] && [ -d "$APP_DIR/.venv" ]
+[ -x "$APP_DIR/run.sh" ] && [ -f "$APP_DIR/cli.py" ] && [ -d "$APP_DIR/.venv" ] && [ -x "$LLAMA_BIN" ]
 "$APP_DIR/.venv/bin/python" -c 'import pypdf,bs4; print("document parsers: OK")'
 "$APP_DIR/run.sh" status
 
 log "Installation complete"
 echo "Project: $APP_DIR"
+echo "Inference: llama.cpp $LLAMA_VERSION"
 echo "Local AI: $MODEL"
 echo "Language: Vietnamese (vi)"
-echo "Ollama: $OLLAMA_VERSION"
 echo "Model smoke test: PASS"
 echo "Start worker: $APP_DIR/run.sh worker"
 echo "Training is disabled on VPS 1."
