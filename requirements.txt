@@ -1,0 +1,3 @@
+# Core pipeline intentionally uses Python standard library.
+# Optional local generation: install Ollama separately via install.sh.
+# Future fine-tuning stack (GPU machine): transformers, datasets, peft, trl, accelerate, bitsandbytes
