@@ -53,7 +53,14 @@ mkdir -p "$LLAMA_DIR"
 tar -xzf "$TMP/llama.tar.gz" -C "$LLAMA_DIR"
 FOUND="$(find "$LLAMA_DIR" -type f -name llama-server -print -quit)"
 [ -n "$FOUND" ] || { echo "ERROR: llama-server binary not found in release archive."; find "$LLAMA_DIR" -maxdepth 3 -type f | head -50; exit 1; }
-cp "$FOUND" "$LLAMA_BIN"
+LIBDIRS="$(find "$LLAMA_DIR" -type f -name 'libllama-server-impl.so' -printf '%h\n' 2>/dev/null | sort -u | paste -sd: -)"
+[ -n "$LIBDIRS" ] || { echo "ERROR: libllama-server-impl.so not found in release archive."; find "$LLAMA_DIR" -maxdepth 4 -type f | head -100; exit 1; }
+cat > "$LLAMA_BIN" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+export LD_LIBRARY_PATH="${LIBDIRS}:\${LD_LIBRARY_PATH:-}"
+exec "$FOUND" "\$@"
+EOF
 chmod +x "$LLAMA_BIN"
 rm -rf "$TMP"
 "$LLAMA_BIN" --version
@@ -68,7 +75,7 @@ echo "$SERVER_PID" > "$APP_DIR/data/state/llama-server.pid"
 
 log "Waiting for llama.cpp HTTP runtime"
 READY=0
-for i in $(seq 1 120); do
+for i in $(seq 1 180); do
   if curl -fsS "http://127.0.0.1:$LLAMA_PORT/health" >/dev/null 2>&1; then READY=1; break; fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "ERROR: llama-server exited during startup."; tail -n 120 "$APP_DIR/data/logs/llama-server.log"; exit 1
