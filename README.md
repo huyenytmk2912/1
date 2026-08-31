@@ -1,70 +1,69 @@
-# 1 — Autonomous Training Data Agent
+# 1 — Autonomous Data Factory
 
-Independent project for building training datasets for **deep reasoning, coding and trading**.
+`1` is the **VPS-1 data-preparation system**. It does not train models. A separate VPS is responsible for GPU training.
 
-## Goal
+## Mission
 
-The system discovers public sources and existing datasets, records provenance, ingests material, normalizes it, reuses compatible training-format data when possible, generates structured examples when needed, validates them, deduplicates them, and produces train/validation/test splits.
+Continuously discover useful public material and existing training-ready datasets for **deep reasoning, coding, and trading**, then turn accepted material into versioned, auditable training data.
 
-## Pipeline
+## VPS split
 
 ```text
-public sources / existing datasets
-            ↓
-       source discovery
-            ↓
- provenance + source policy
-            ↓
-       ingest / extract
-            ↓
- normalize + deduplicate
-            ↓
- ┌──────────┬──────────┬──────────┐
- reasoning   coding    trading
- └──────────┴──────────┴──────────┘
-            ↓
-   generate / transform
-            ↓
-      quality validation
-            ↓
- train / validation / test
+VPS 1 (repo 1)
+  discover → import → extract → clean → dedup → classify
+  → generate/transform → quality gate → train/val/test → export
+                                                        │
+                                                        ▼
+VPS 2 (training)
+  preflight → LoRA/QLoRA → evaluation → checkpoint
 ```
 
-## Local AI is optional
+## Local AI
 
-The deterministic pipeline can collect and organize data without a local model. If `MODEL` points to an Ollama model, it is used to generate structured examples. This keeps the project usable on a small VPS and allows a stronger model/API to be introduced later without redesigning the pipeline.
+Optional on VPS 1. A small Ollama model can generate/transform examples when configured. The factory remains usable without it for collection, import, cleaning, provenance and dataset assembly.
 
-## Domains
+## Prefer existing good data
 
-- **Reasoning:** logic, mathematics, scientific problem solving, multi-step analysis and verification. Generated records should use concise key steps rather than hidden chain-of-thought.
-- **Coding:** algorithms, programming, debugging, code review and software-engineering tasks. The roadmap includes executable tests before accepting generated coding records.
-- **Trading:** market structure, statistics, econometrics, portfolio/risk, backtesting and scenario analysis. Do not fabricate performance or convert examples into personalized financial advice.
+If an input dataset already has a compatible training schema, the importer keeps it rather than unnecessarily rewriting it. Every imported record is marked for provenance/quality review.
 
-## One-command fresh VPS
+## Safety gates
+
+The factory does **not** assume that publicly reachable material is training-licensed. It records source and license status and keeps ambiguous material reviewable. Synthetic examples are not accepted merely because they are valid JSON.
+
+For reasoning, examples should teach problem solving with concise approaches, key steps and verification rather than storing hidden chain-of-thought. Coding data should eventually pass executable tests. Trading data should emphasize concepts, statistics, risk, market structure, backtesting and scenario analysis and must not fabricate returns.
+
+## One-command VPS-1 install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huyenytmk2912/1/main/install.sh | bash
 ```
 
-The installer prepares a Linux VPS, starts the persistent worker, and uses a small local model only when the machine has enough RAM and the model can be installed successfully.
+The installer creates the data-factory directories and optional local-AI runtime. It does **not** start GPU training.
 
-## Output
+## Main commands
 
-```text
-data/raw/          collected source records + provenance
-data/dataset/      validated JSONL datasets
-data/logs/         runtime logs
-data/state/        persistent state
+```bash
+~/training-data-agent/run.sh status
+~/training-data-agent/run.sh worker
+~/training-data-agent/run.sh build
+~/training-data-agent/run.sh readiness
+~/training-data-agent/run.sh export
 ```
 
-Main outputs: `all.jsonl`, `train.jsonl`, `validation.jsonl`, `test.jsonl`, and `stats.json`.
+## Data layout
 
-## Quality and licensing
+```text
+data/
+├── inbox/       optional user-provided datasets/documents
+├── raw/         collected source records + provenance
+├── dataset/     generated train/validation/test JSONL
+├── review/      material awaiting review
+├── export/      packages for VPS 2
+└── logs/        runtime logs
+```
 
-Publicly accessible does not automatically mean training-licensed. The system records source/provenance and is conservative about arbitrary crawling. License status must be reviewed before redistribution or commercial training.
+## Current boundary
 
-Synthetic data is not automatically correct. Stronger verification, source-level deduplication, contamination checks, and executable evaluation for coding should be added as the project scales.
+VPS 1 is intentionally responsible for **data**, not model training. The training server should consume the exported artifact and perform GPU work independently.
 
-## Current status
-
-The bootstrap and autonomous first-stage pipeline are ready to start. The next upgrades are richer source adapters, license metadata/scoring, stronger verification, existing-dataset importers, coding execution tests, and a separate fine-tuning pipeline.
+The next production upgrades are richer source adapters, robust PDF/HTML extraction, explicit license metadata, stronger AI verification, coding sandbox tests, contamination detection, dataset versioning, and a secure transfer protocol to VPS 2.
