@@ -30,10 +30,17 @@ MODEL="${MODEL:-}"
 if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen3.5:2b"; fi
 if [ -n "$MODEL" ]; then
   log "Preparing optional local AI: $MODEL"
-  if ! need ollama; then if ! curl -fsSL https://ollama.com/install.sh | $SUDO sh; then echo "WARNING: Ollama installation failed; continuing without local AI."; MODEL=""; fi; fi
+  if ! need ollama; then curl -fsSL https://ollama.com/install.sh | $SUDO sh || true; fi
+  # A broken/incomplete Ollama install can have the client but no llama-server.
+  # Validate the runtime before pulling/using a model; never leave a broken AI runtime as a hard install failure.
+  if need ollama && ! ollama serve --help >/dev/null 2>&1; then
+    echo "WARNING: Ollama runtime is unavailable; continuing in deterministic mode."
+    MODEL=""
+  fi
   if [ -n "$MODEL" ]; then
-    if ! pgrep -x ollama >/dev/null 2>&1; then nohup ollama serve >"$APP_DIR/data/logs/ollama.log" 2>&1 & sleep 4; fi
-    if ! ollama pull "$MODEL"; then echo "WARNING: model pull failed; continuing without local AI."; MODEL=""; fi
+    if ! pgrep -x ollama >/dev/null 2>&1; then nohup ollama serve >"$APP_DIR/data/logs/ollama.log" 2>&1 & sleep 5; fi
+    if ! ollama list >/dev/null 2>&1; then echo "WARNING: Ollama daemon unavailable; continuing without local AI."; MODEL=""; fi
+    if [ -n "$MODEL" ] && ! ollama pull "$MODEL"; then echo "WARNING: model pull failed; continuing without local AI."; MODEL=""; fi
   fi
 fi
 log "Writing runtime launcher"
