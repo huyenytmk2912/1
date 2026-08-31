@@ -1,0 +1,18 @@
+{
+  "domains": ["reasoning", "coding", "trading"],
+  "sources": ["arxiv", "huggingface"],
+  "model": "qwen3.5:2b",
+  "interval_seconds": 1800,
+  "max_source_chars": 30000,
+  "min_quality_score": 0.80,
+  "require_license_for_training": true,
+  "auto_train": false,
+  "training": {
+    "method": "qlora",
+    "base_model": "Qwen/Qwen3-4B",
+    "output_dir": "models/trained",
+    "epochs": 2,
+    "learning_rate": 0.0002,
+    "max_seq_length": 4096
+  }
+}
