@@ -20,7 +20,11 @@ VPS 2 (training)
 
 ## Local AI
 
-Optional on VPS 1. A small Ollama model can generate/transform examples when configured. The factory remains usable without it for collection, import, cleaning, provenance and dataset assembly.
+VPS 1 uses **Gemma 3 4B (`gemma3:4b`)** through Ollama for optional generation/verification. The previous Qwen runtime is no longer selected by the installer.
+
+The installer does not trust the Ollama CLI alone. It verifies the HTTP runtime, pulls the exact model, checks that the exact model appears in `/api/tags`, and runs a real Vietnamese inference smoke test. If any of those checks fail, installation stops instead of claiming success.
+
+The factory remains usable for collection, import, cleaning, provenance and dataset assembly without the local model, but the standard installer now requires the configured Gemma runtime to pass its smoke test.
 
 ## Prefer existing good data
 
@@ -38,7 +42,7 @@ For reasoning, examples should teach problem solving with concise approaches, ke
 curl -fsSL https://raw.githubusercontent.com/huyenytmk2912/1/main/install.sh | bash
 ```
 
-The installer creates the data-factory directories and optional local-AI runtime. It does **not** start GPU training.
+The installer creates the data-factory directories, installs/updates Ollama, validates Gemma 3 4B with a Vietnamese inference test, and then writes the runtime launcher. It does **not** start GPU training.
 
 ## Main commands
 
