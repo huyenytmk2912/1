@@ -26,9 +26,10 @@ try: print(int(os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')/1024**3))
 except: print(0)
 PY
 )"
-# Stable small local model for VPS-1 data preparation. Override with MODEL=... if desired.
+# Stable multilingual instruction model for VPS-1 data preparation.
+# Override with MODEL=... if explicitly desired.
 MODEL="${MODEL:-}"
-if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen2.5:3b"; fi
+if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen2.5:3b-instruct"; fi
 if [ -n "$MODEL" ]; then
   log "Preparing optional local AI: $MODEL"
   if ! need ollama; then curl -fsSL https://ollama.com/install.sh | $SUDO sh || true; fi
@@ -54,6 +55,7 @@ INTERVAL=1800
 MAX_SOURCE_CHARS=30000
 MIN_QUALITY_SCORE=0.80
 AUTO_TRAIN=0
+LANGUAGE=vi
 EOF
 cat > "$APP_DIR/run.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -75,5 +77,6 @@ log "Running installation self-check"
 log "Installation complete"
 echo "Project: $APP_DIR"
 echo "Local AI: ${MODEL:-none (deterministic mode)}"
+echo "Language: Vietnamese (vi)"
 echo "Start worker: $APP_DIR/run.sh worker"
 echo "Training is disabled on VPS 1."
