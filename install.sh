@@ -26,8 +26,9 @@ try: print(int(os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')/1024**3))
 except: print(0)
 PY
 )"
+# Stable small local model for VPS-1 data preparation. Override with MODEL=... if desired.
 MODEL="${MODEL:-}"
-if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen3.5:2b"; fi
+if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen2.5:3b"; fi
 if [ -n "$MODEL" ]; then
   log "Preparing optional local AI: $MODEL"
   if ! need ollama; then curl -fsSL https://ollama.com/install.sh | $SUDO sh || true; fi
