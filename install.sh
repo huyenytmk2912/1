@@ -10,7 +10,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 log(){ printf '\n[KHUONG] %s\n' "$*"; }
 need_cmd(){ command -v "$1" >/dev/null 2>&1; }
-
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
 log "Checking host"
@@ -34,41 +33,27 @@ except Exception:
 PY
 )"
 
-if ! need_cmd "$PYTHON_BIN"; then
-  echo "Python 3 is required."; exit 1
-fi
+if ! need_cmd "$PYTHON_BIN"; then echo "Python 3 is required."; exit 1; fi
 
-if ! need_cmd git; then
-  log "Installing git"
-  if command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update && $SUDO apt-get install -y git curl
-  elif command -v dnf >/dev/null 2>&1; then $SUDO dnf install -y git curl
-  else echo "Please install git and curl, then rerun."; exit 1; fi
-fi
-
-if ! need_cmd curl; then
-  if command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update && $SUDO apt-get install -y curl
-  elif command -v dnf >/dev/null 2>&1; then $SUDO dnf install -y curl
-  else echo "curl is required."; exit 1; fi
+if ! need_cmd curl || ! need_cmd git; then
+  log "Installing base packages"
+  if command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update && $SUDO apt-get install -y curl git
+  elif command -v dnf >/dev/null 2>&1; then $SUDO dnf install -y curl git
+  else echo "Please install curl and git, then rerun."; exit 1; fi
 fi
 
 log "Installing Ollama if missing"
-if ! need_cmd ollama; then
-  curl -fsSL https://ollama.com/install.sh | $SUDO sh
-fi
+if ! need_cmd ollama; then curl -fsSL https://ollama.com/install.sh | $SUDO sh; fi
+if ! pgrep -x ollama >/dev/null 2>&1; then nohup ollama serve >"$HOME/ollama.log" 2>&1 & sleep 3; fi
 
-if ! pgrep -x ollama >/dev/null 2>&1; then
-  nohup ollama serve >"$HOME/ollama.log" 2>&1 &
-  sleep 3
-fi
-
-log "Installing Python agent stack"
+log "Preparing Python agent stack"
 mkdir -p "$APP_DIR"
 $PYTHON_BIN -m venv "$APP_DIR/.venv"
 source "$APP_DIR/.venv/bin/activate"
 python -m pip install --upgrade pip
-python -m pip install -U 'qwen-agent[mcp]'
+python -m pip install -U 'qwen-agent[mcp]' uv
 
-# Resource-aware default. Users can override KHUONG_MODEL before rerunning.
+# Resource-aware default. Override with KHUONG_MODEL=... if desired.
 if [ "$RAM_GIB" -ge 32 ]; then
   DEFAULT_MODEL="qwen3:8b"
 elif [ "$RAM_GIB" -ge 16 ]; then
@@ -85,14 +70,14 @@ MODEL="${KHUONG_MODEL:-$DEFAULT_MODEL}"
 log "Pulling local model: $MODEL"
 ollama pull "$MODEL"
 
-# Optional larger model, never pulled automatically.
+# Optional larger models are listed but never downloaded blindly.
 cat > "$APP_DIR/models.txt" <<'EOF'
-# Optional models (choose only if the VPS can handle them):
+# Small → strong options:
 # qwen3.5:0.8b
 # qwen3.5:2b
 # qwen3:4b
 # qwen3:8b
-# Qwen3-Coder-30B-A3B-Instruct (large; use a compatible quantized deployment)
+# Qwen3-Coder-30B-A3B-Instruct — large; use a compatible quantized deployment
 EOF
 
 cat > "$APP_DIR/config.env" <<EOF
@@ -102,14 +87,24 @@ KHUONG_API_KEY=EMPTY
 KHUONG_APP_DIR=$APP_DIR
 EOF
 
+# MCP tools: time + web fetch + local filesystem. Filesystem is restricted to APP_DIR.
 cat > "$APP_DIR/mcp.json" <<EOF
 {
   "mcpServers": {
     "time": {"command": "uvx", "args": ["mcp-server-time", "--local-timezone=Asia/Tokyo"]},
-    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}
+    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+    "filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "$APP_DIR"]}
   }
 }
 EOF
+
+# Install Node only when the filesystem MCP server needs it.
+if ! need_cmd npx; then
+  log "Installing Node.js for filesystem MCP"
+  if command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update && $SUDO apt-get install -y nodejs npm
+  elif command -v dnf >/dev/null 2>&1; then $SUDO dnf install -y nodejs npm
+  else log "Node.js unavailable; filesystem MCP will be disabled until npx is installed."; fi
+fi
 
 cat > "$APP_DIR/chat.py" <<'PY'
 import json
@@ -118,6 +113,7 @@ from qwen_agent.agents import Assistant
 
 server = os.getenv('KHUONG_MODEL_SERVER', 'http://127.0.0.1:11434/v1')
 model = os.getenv('KHUONG_MODEL', 'qwen3.5:2b')
+app_dir = os.getenv('KHUONG_APP_DIR', os.path.expanduser('~/khuong-local'))
 
 llm_cfg = {
     'model': model,
@@ -125,19 +121,27 @@ llm_cfg = {
     'api_key': os.getenv('KHUONG_API_KEY', 'EMPTY'),
 }
 
-# MCP tools are optional. If uvx/tool servers are unavailable, chat still works.
 tools = []
-mcp_path = os.path.join(os.getenv('KHUONG_APP_DIR', os.path.expanduser('~/khuong-local')), 'mcp.json')
+mcp_path = os.path.join(app_dir, 'mcp.json')
 try:
     with open(mcp_path, encoding='utf-8') as f:
-        tools = [{"mcpServers": json.load(f)["mcpServers"]}]
-except Exception:
-    pass
+        servers = json.load(f)['mcpServers']
+    # Disable filesystem MCP if npx is not present.
+    import shutil
+    if not shutil.which('npx'):
+        servers.pop('filesystem', None)
+    if servers:
+        tools = [{"mcpServers": servers}]
+except Exception as exc:
+    print(f'[KHUONG] MCP disabled: {exc}')
 
 bot = Assistant(
     llm=llm_cfg,
     function_list=tools,
-    system_message='Bạn là Khương, trợ lý AI local. Trả lời bằng tiếng Việt khi người dùng nói tiếng Việt. Dùng tool khi cần và kiểm tra kết quả trước khi kết luận.'
+    system_message=(
+        'Bạn là Khương, trợ lý AI local. Trả lời bằng tiếng Việt khi người dùng nói tiếng Việt. '
+        'Dùng tool khi cần, không giả vờ đã thực hiện thao tác, và kiểm tra kết quả trước khi kết luận.'
+    )
 )
 
 messages=[]
@@ -171,19 +175,19 @@ Khương local agent bootstrap
 
 Installed automatically:
 - Ollama local inference runtime
-- Qwen-Agent with function calling/MCP support
+- Qwen-Agent with function calling/planning/memory/MCP support
 - Resource-aware Qwen local model
-- MCP time/fetch tool configuration
+- MCP time + web fetch + restricted filesystem tools
 - Local chat launcher
 
-Small-to-large model options:
+Small-to-large options:
 - qwen3.5:0.8b
 - qwen3.5:2b
 - qwen3:4b
 - qwen3:8b
-- Qwen3-Coder-30B-A3B-Instruct: optional, large/quantized deployment only
+- Qwen3-Coder-30B-A3B-Instruct: optional large/quantized deployment
 
-The installer intentionally does not pull a 30B model automatically. It chooses a smaller model from detected RAM.
+The installer does not download a 30B model automatically. It selects a smaller model from detected RAM.
 EOF
 
 log "Installation complete"
