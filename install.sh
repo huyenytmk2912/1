@@ -52,18 +52,27 @@ rm -rf "$LLAMA_DIR"
 mkdir -p "$LLAMA_DIR"
 tar -xzf "$TMP/llama.tar.gz" -C "$LLAMA_DIR"
 FOUND="$(find "$LLAMA_DIR" -type f -name llama-server -print -quit)"
-[ -n "$FOUND" ] || { echo "ERROR: llama-server binary not found in release archive."; find "$LLAMA_DIR" -maxdepth 3 -type f | head -50; exit 1; }
-LIBDIRS="$(find "$LLAMA_DIR" -type f -name 'libllama-server-impl.so' -printf '%h\n' 2>/dev/null | sort -u | paste -sd: -)"
-[ -n "$LIBDIRS" ] || { echo "ERROR: libllama-server-impl.so not found in release archive."; find "$LLAMA_DIR" -maxdepth 4 -type f | head -100; exit 1; }
+[ -n "$FOUND" ] || { echo "ERROR: llama-server binary not found in release archive."; find "$LLAMA_DIR" -maxdepth 4 -type f | head -100; exit 1; }
+LIBDIRS="$(find "$LLAMA_DIR" -type f \( -name '*.so' -o -name '*.so.*' \) -printf '%h\n' 2>/dev/null | sort -u | paste -sd: -)"
+LIBFILE="$(find "$LLAMA_DIR" -type f -name 'libllama-server-impl.so' -print -quit)"
+[ -n "$LIBFILE" ] || { echo "ERROR: libllama-server-impl.so not found in release archive."; find "$LLAMA_DIR" -maxdepth 5 -type f | head -150; exit 1; }
+LIBROOT="$(dirname "$LIBFILE")"
 cat > "$LLAMA_BIN" <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
-export LD_LIBRARY_PATH="${LIBDIRS}:\${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$LIBROOT:$LLAMA_DIR:$LIBDIRS:\${LD_LIBRARY_PATH:-}"
 exec "$FOUND" "\$@"
 EOF
 chmod +x "$LLAMA_BIN"
 rm -rf "$TMP"
+
+log "Validating llama.cpp binary and shared libraries"
 "$LLAMA_BIN" --version
+if command -v ldd >/dev/null 2>&1; then
+  if ldd "$FOUND" 2>/dev/null | grep -q 'not found'; then
+    echo "ERROR: llama-server still has unresolved shared libraries:"; ldd "$FOUND"; exit 1
+  fi
+fi
 
 log "Starting llama.cpp server with exact model"
 pkill -f "$LLAMA_BIN" 2>/dev/null || true
