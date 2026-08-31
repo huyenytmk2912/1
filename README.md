@@ -20,11 +20,25 @@ VPS 2 (training)
 
 ## Local AI
 
-VPS 1 uses **Gemma 3 4B (`gemma3:4b`)** through Ollama for optional generation/verification. The previous Qwen runtime is no longer selected by the installer.
+VPS 1 uses **llama.cpp directly with GGUF**. **Ollama is not used.**
 
-The installer does not trust the Ollama CLI alone. It verifies the HTTP runtime, pulls the exact model, checks that the exact model appears in `/api/tags`, and runs a real Vietnamese inference smoke test. If any of those checks fail, installation stops instead of claiming success.
+Default local model:
 
-The factory remains usable for collection, import, cleaning, provenance and dataset assembly without the local model, but the standard installer now requires the configured Gemma runtime to pass its smoke test.
+```text
+ggml-org/Qwen3-1.7B-GGUF:Q4_K_M
+```
+
+The installer validates all of the following before reporting success:
+
+1. `llama-server` starts and its shared libraries resolve.
+2. The HTTP runtime becomes healthy.
+3. `/v1/models` reports the **exact configured model ID**.
+4. A real Vietnamese inference smoke test returns `OK`.
+5. Repository Python entrypoints pass `py_compile`.
+
+If a check fails, installation stops instead of claiming success.
+
+The factory remains usable for collection, import, cleaning, provenance and dataset assembly without model generation. VPS-1 never performs GPU training.
 
 ## Prefer existing good data
 
@@ -39,10 +53,10 @@ For reasoning, examples should teach problem solving with concise approaches, ke
 ## One-command VPS-1 install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huyenytmk2912/1/main/install.sh | bash
+rm -rf ~/training-data-agent && curl -fsSL https://raw.githubusercontent.com/huyenytmk2912/1/main/install.sh | bash
 ```
 
-The installer creates the data-factory directories, installs/updates Ollama, validates Gemma 3 4B with a Vietnamese inference test, and then writes the runtime launcher. It does **not** start GPU training.
+For a non-root account, use `sudo` as needed. The installer creates a clean VPS-1 project, installs the Python dependencies and llama.cpp runtime, downloads the configured GGUF model through llama.cpp, validates Vietnamese inference, and writes the runtime launcher. It does **not** install or start Ollama and does **not** start GPU training.
 
 ## Main commands
 
@@ -69,5 +83,3 @@ data/
 ## Current boundary
 
 VPS 1 is intentionally responsible for **data**, not model training. The training server should consume the exported artifact and perform GPU work independently.
-
-The next production upgrades are richer source adapters, robust PDF/HTML extraction, explicit license metadata, stronger AI verification, coding sandbox tests, contamination detection, dataset versioning, and a secure transfer protocol to VPS 2.
