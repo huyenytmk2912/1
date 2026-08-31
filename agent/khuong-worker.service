@@ -1,0 +1,15 @@
+[Unit]
+Description=Khuong dataset worker
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/khuong
+EnvironmentFile=-%h/khuong/agent/config.env
+ExecStart=/usr/bin/python3 %h/khuong/agent/agent.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
