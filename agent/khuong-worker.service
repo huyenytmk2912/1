@@ -1,15 +1,15 @@
 [Unit]
-Description=Khuong dataset worker
-After=network-online.target ollama.service
+Description=Training Data Agent
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/khuong
-EnvironmentFile=-%h/khuong/agent/config.env
-ExecStart=/usr/bin/python3 %h/khuong/agent/agent.py
+WorkingDirectory=%h/training-data-agent
+EnvironmentFile=-%h/training-data-agent/agent/config.env
+ExecStart=/usr/bin/python3 %h/training-data-agent/agent/agent.py
 Restart=always
-RestartSec=10
+RestartSec=15
 
 [Install]
 WantedBy=default.target
