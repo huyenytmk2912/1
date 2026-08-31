@@ -26,22 +26,26 @@ try: print(int(os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')/1024**3))
 except: print(0)
 PY
 )"
-# Stable multilingual instruction model for VPS-1 data preparation.
+# Google Gemma 3 4B: multilingual, compact and suitable for VPS-1 data preparation.
 # Override with MODEL=... if explicitly desired.
 MODEL="${MODEL:-}"
-if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="qwen2.5:3b-instruct"; fi
+if [ -z "$MODEL" ] && [ "$RAM" -ge 8 ]; then MODEL="gemma3:4b"; fi
 if [ -n "$MODEL" ]; then
   log "Preparing optional local AI: $MODEL"
   if ! need ollama; then curl -fsSL https://ollama.com/install.sh | $SUDO sh || true; fi
-  # A broken/incomplete Ollama install can have the client but no llama-server.
-  # Validate the runtime before pulling/using a model; never leave a broken AI runtime as a hard install failure.
-  if need ollama && ! ollama serve --help >/dev/null 2>&1; then
-    echo "WARNING: Ollama runtime is unavailable; continuing in deterministic mode."
+  # Do not mistake a working Ollama CLI for a working inference runtime.
+  # A complete runtime must expose a llama-server executable before we pull a model.
+  LLAMA_SERVER=""
+  for p in /usr/lib/ollama/llama-server /usr/local/lib/ollama/llama-server /usr/local/bin/ollama/llama-server; do
+    if [ -x "$p" ]; then LLAMA_SERVER="$p"; break; fi
+  done
+  if need ollama && [ -z "$LLAMA_SERVER" ]; then
+    echo "WARNING: Ollama llama-server runtime is unavailable; continuing in deterministic mode."
     MODEL=""
   fi
   if [ -n "$MODEL" ]; then
     if ! pgrep -x ollama >/dev/null 2>&1; then nohup ollama serve >"$APP_DIR/data/logs/ollama.log" 2>&1 & sleep 5; fi
-    if ! ollama list >/dev/null 2>&1; then echo "WARNING: Ollama daemon unavailable; continuing without local AI."; MODEL=""; fi
+    if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then echo "WARNING: Ollama daemon unavailable; continuing without local AI."; MODEL=""; fi
     if [ -n "$MODEL" ] && ! ollama pull "$MODEL"; then echo "WARNING: model pull failed; continuing without local AI."; MODEL=""; fi
   fi
 fi
